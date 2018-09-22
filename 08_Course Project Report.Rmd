@@ -1,0 +1,159 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Elena Fedorova"
+date: "22 September 2018"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+The data from accelerometers are preliminarily collected from the provided sources:
+The training data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+Ultimately, the prediction model will be used to predict 20 different test cases, each result of which will be written to the separate txt file. The outputs are used as answers to the final quiz.
+
+# Initial preparation
+
+For the purposes of the project the following libraries in R are going to be used. The first step is to load them:
+
+```{r, message = FALSE, warning = FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(dplyr)
+```
+
+## Reading the data into R
+``` {r, echo = TRUE}
+train_data <- read.csv("./data/pml-training.csv")
+test_data <- read.csv("./data/pml-testing.csv")
+```
+
+## Exploring the data
+```{r, echo = TRUE}
+glimpse(train_data)
+glimpse(test_data)
+```
+
+## Tidying the data
+Removal of the missing values in both data sets:
+```{r, echo = TRUE}
+sum(complete.cases(train_data))
+train_data <- train_data[, colSums(is.na(train_data)) == 0] 
+test_data <- test_data[, colSums(is.na(test_data)) == 0] 
+```
+
+For the goal of the project (predict the manner in which participants did the exercise) the "classe" variable in the training set will be used. As the next step, removal of unnecessary variables from both data sets will be performed (i.e. column "time stamps"  might a be good indicator of performance type, however, these data won't be useful for making prediction outside of the sample):
+
+```{r, echo = TRUE}
+classe <- train_data$classe # Clean training data-set
+train_remove <- grepl("^X|timestamp|window", names(train_data))
+train_data <- train_data[, !train_remove]
+train_tidy <- train_data[, sapply(train_data, is.numeric)]
+
+train_tidy$classe <- classe # Clean testing data-set
+test_remove <- grepl("^X|timestamp|window", names(test_data))
+test_data <- test_data[, !test_remove]
+test_tidy <- test_data[, sapply(test_data, is.numeric)]
+
+dim(train_tidy)
+dim(test_tidy)
+
+```
+As a result, there are two cleaned data sets ready for further tasks: training set now contains 19622  observations of 53 variables and testing set - 20 observations of 53 variables. These variable will be candiate predictors for the purpose of further analysis.
+
+## Data partition
+One of the key steps of this exercise is to create data partition. The cleaned training data set will be split into training data set (70%) and a test data set (30%):
+```{r, echo = TRUE}
+set.seed(23415) 
+inTrain <- createDataPartition(train_tidy$classe, p=0.70, list=F)
+trainData <- train_tidy[inTrain, ]
+testData <- train_tidy[-inTrain, ]
+```
+
+Correlation plot:
+```{r, echo = TRUE}
+corrPlot <- cor(trainData[, -length(names(trainData))])
+corrplot(corrPlot, method="color")
+```
+
+# Prediction model development
+To fit a prediction model for activity recognition, the Random Forest algorithm will be applied. This perediction algorithm is known as one of the most effective for classification problems: among the set of variables it automatically selects important ones. It is also robust to correlated covariates & outliers in general. Additionally, the 5-fold cross validation is going to be used when applying the algorithm to find the best parameters for the prediction model.
+
+```{r, echo = TRUE}
+controlRf <- trainControl(method="cv", 5)
+modelRf <- train(classe ~ ., 
+                 data=trainData, 
+                 method="rf", 
+                 trControl=controlRf, 
+                 ntree=250)
+```
+
+The final summary of the model output is the following:
+```{r, echo = TRUE}
+modelRf
+```
+
+The estimated model accuracy accross different number of the randomly selected predictors can also be visualised in the following plot: of the values that were investigated for mtry, the best choice with the highest cross valitated accuracy is 27.
+
+```{r, echo = TRUE}
+plot(modelRf)
+```
+
+Estimation of the performance of the model on the validation data set.
+```{r, echo = TRUE}
+predictRf <- predict(modelRf, testData)
+confusionMatrix(testData$classe, predictRf)
+```
+
+Ultimately, perform calculation of accuracy:
+```{r, echo = TRUE}
+accuracy <- postResample(predictRf, testData$classe)
+accuracy
+oose <- 1 - as.numeric(confusionMatrix(testData$classe, predictRf)$overall[1])
+oose
+```
+Result: the estimated accuracy of the model is 99.37% and the estimated out-of-sample error is 0.63%.
+
+# Perform prediction
+In the following step of the project, the developed model will be applied to the original testing data set downloaded from the data source:
+```{r, echo = TRUE}
+result <- predict(modelRf, test_tidy[, -length(names(test_tidy))])
+result
+```
+
+Decision tree visualisation:
+``` {r, echo = TRUE}
+treeModel <- rpart(classe ~ ., data=trainData, method="class")
+prp(treeModel)
+```
+
+# Practical Machine Learning Course Project Quiz
+
+To run and write into txt-files the prediction simulation for 20 cases the followwing chunk of R-code will be used:
+
+```{r, echo = TRUE}
+quiz_result <- result
+write_txt <- function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("quiz/question_",i,".txt")
+    write.table(x[i], file=filename, quote=FALSE,
+                row.names=FALSE, col.names=FALSE)
+  }
+}
+write_txt(quiz_result)
+```
